@@ -1,21 +1,57 @@
-//may also be known as pdfizer_proofofconcept.
+function pdf_obtain_info() {
+  if (ran_obtainInfo===true){
+    Logger.log("already ran pdf_obtain_info! returning...")
+    return;
+  }
 
-//sheet & spreadsheet entity var assignments
-var ssID = "1nX7pmzwWSjUHN6RAGWBRwQg4ZBSwMlLKQrWz-_PQzgY";
-//if you go to the url of your spreadsheet, it's the numbers&letters after ".com/spreadsheets/d/" but before the "/edit". please copy that in and replace the existing one.
+  let OUTPUT_FOLDER_NAME = "rubric_download", OUTPUT_PDF_NAME = "STUDENTNAME_Rubric"; //defaults
 
-var gsheet = SpreadsheetApp.openById(ssID);
-var rubric = gsheet.getSheetByName("Summary Rubric");
-var gradebook = gsheet.getSheetByName("Gradebook");
+  var ui = SpreadsheetApp.getUi();
+  // vv Dialogue Box for Name of output folder vv ========
+  var outputFolderPrompt = ui.prompt('Name of Output Folder', 'Please enter the name of the folder you\'d like to save the PDFs to. Please ensure the folder is in the same Drive location as this GSheet. If there is no folder, one will be made automatically.', ui.ButtonSet.OK_CANCEL);
+  if (outputFolderPrompt.getSelectedButton() == ui.Button.OK) {
+    //Logger.log('User Input for Output Folder Name: ' + String(outputFolderPrompt.getResponseText()));
+    if(outputFolderPrompt.getResponseText()!=""){OUTPUT_FOLDER_NAME = outputFolderPrompt.getResponseText();}
+  } else {
+    ui.alert("Please rerun the program to re-enter the information.");
+    throw "The user canceled or closed the Output Folder prompt.";
+  }
+  // vv Dialogue Box for names of PDFs vv ========
+    var outputPDFPrompt = ui.prompt('Name of Saved PDFs', 'Please enter the name you\'d like to save the PDfs as. Add "STUDENTNAME" to have it replaced with the student\'s name, and "DOCNAME" for the name of the GSheet. Don\'t include the ".pdf."', ui.ButtonSet.OK_CANCEL);
+  if (outputPDFPrompt.getSelectedButton() == ui.Button.OK) {
+    //Logger.log('User Input for Output PDF Name: ' + String(outputPDFPrompt.getResponseText()));
+    if(outputPDFPrompt.getResponseText()!=""){OUTPUT_PDF_NAME = outputPDFPrompt.getResponseText();}
+  } else {
+    ui.alert("Please rerun the program to re-enter the information.");
+    throw "The user canceled or closed the Output PDF prompt.";
+  }
+
+  // vv confirmation of names vv ========
+  var info_confirmation = ui.alert('Confirm your saving locations/names:\nFolder Name: ' + OUTPUT_FOLDER_NAME + '\nFile Name: ' + OUTPUT_PDF_NAME + '\n\nPlease also ensure the GSheet\'s tabs are named "Summary Rubric" and "Gradebook".', ui.ButtonSet.YES_NO);
+  if (info_confirmation == ui.Button.NO) {
+    //Logger.log('User Input for Output PDF Name: ' + String(outputPDFPrompt.getResponseText()));
+    ui.alert("Please rerun the program to re-enter the information.");
+    throw "The user canceled or closed the Info Confirmation prompt.";
+  }
+  //Logger.log(SpreadsheetApp.getActiveSpreadsheet().getId());
+  ran_obtainInfo = true;
+  return [SpreadsheetApp.getActiveSpreadsheet().getId(), OUTPUT_FOLDER_NAME, OUTPUT_PDF_NAME];
+  //returns: ssID, OUTPUT_FOLDER_NAME, OUTPUT_PDF_NAME
+}
+
+var ran_obtainInfo = false; //for run-once-only capabilities
+
+var info = pdf_obtain_info(); //new var so it doesn't run the function thrice
+var ssID = info[0]
+var OUTPUT_FOLDER_NAME = info[1]
+var OUTPUT_PDF_NAME = info[2];
+
+Logger.log("ssID: " + String(ssID) + "\nOutput Folder Name: " + OUTPUT_FOLDER_NAME + "\nPDF Name: " + OUTPUT_PDF_NAME);
+
+var gsheet = SpreadsheetApp.getActiveSpreadsheet();
+var rubric = gsheet.getSheetByName("Summary Rubric"); //HARDCODED (but should be what the tabs're already named)
+var gradebook = gsheet.getSheetByName("Gradebook"); //HARDCODED
 //make sure that your spreadsheet tabs are named these!
-
-var OUTPUT_FOLDER_NAME = "rubricizer_pdf_download";
-//name of GFolder you'd like to save the files to. if the folder doesn't already exist, it'll make a new one for you!
-var OUTPUT_PDF_NAME = "STUDENTNAME_Rubric";
-//the .pdf is added automatically so don't include that. "STUDENTNAME" will be replaced by the student's name, with an underscore (FirstName_LastName).
-//TODO: have "DOCTITLE" as an autofill possibility
-
-var ran_pdfizer = false;
 
 //vv calculating variables vv
 
@@ -37,8 +73,8 @@ function pdf_getFolderByName_(folderName) {
   //does: makes a new GDrive folder w/ input folder name, or if one already exists, then returns that one
 
   // Gets the Drive Folder of where the current spreadsheet is located.
-  const ssId = SpreadsheetApp.getActiveSpreadsheet().getId();
-  const parentFolder = DriveApp.getFileById(ssId).getParents().next();
+  //const ssId = SpreadsheetApp.getActiveSpreadsheet().getId();
+  const parentFolder = DriveApp.getFileById(ssID).getParents().next();
 
   // Iterates the subfolders to check if the PDF folder already exists.
   const subFolders = parentFolder.getFolders();
@@ -123,23 +159,21 @@ function pdf_izer(rubric) {
   //input: rubric tab
   //returns: none, but RESULTS IN: the saving of everyone's pdfs to a GFolder indicated by the variable "OUTPUT_FOLDER_NAME"
   //does: iterates through the a1 cell in the rubric tab to create a pdf for each student
-  Logger.log(ran_pdfizer);
-  if(ran_pdfizer === true){ //this if-statement is copied in every use-once function b/c i'm not sure if you can cancel a function from another function. this lock thing is only needed b/c for whatever reason sometimes GApps Script runs functions twice. if you find out why lmk
-  //TODO: the above function does not work lmao
-    Logger.log("already run before; canceling the function!");
-    return; //TODO: add manual override?
-  }
+
+  //had a run-once-only if-statement here but took it out
 
   Logger.log("starting pdf_izer...");
   var studentName = "";
+  var documentName = gsheet.getName();
   pdf_getFolderByName_confirmation(OUTPUT_FOLDER_NAME);
 
   Logger.log(rubric.getRange(2,2).getValue())
-  for(var i=2;i<NUM_STUDENTS+2;i++){
+  for(var i=2;i<NUM_STUDENTS+2;i++){ //idk why I needed the +2 lmao //the i is for the student ID of the first rubric you'd like to make
     rubric.getRange(1,1).setValue(i);
     studentName = rubric.getRange(1,2).getValue();
     Logger.log(studentName);
-    createPDF(ssID, rubric, OUTPUT_PDF_NAME.replace("STUDENTNAME",studentName.replace(" ", "_")), OUTPUT_FOLDER_NAME);
+    createPDF(ssID, rubric, OUTPUT_PDF_NAME.replace("STUDENTNAME",studentName.replace(" ", "_")).replace("DOCNAME", documentName.replace(/ /g, "_")), OUTPUT_FOLDER_NAME); //replaces the placeholders and puts in the student name & doc name, where the spaces have been replaced with underscores
+
   }
   Logger.log("completed pdf_izer");
   ran_pdfizer = true;
