@@ -145,7 +145,19 @@ function createPDF(ssId, rubric, pdfName, folderName) {
     "r1=" + fr + "&c1=" + fc + "&r2=" + lr + "&c2=" + lc; //lr is not declared with the others b/c it's a function input
 
   const params = { method: "GET", headers: { "authorization": "Bearer " + ScriptApp.getOAuthToken() } };
-  const blob = UrlFetchApp.fetch(url, params).getBlob().setName(pdfName + '.pdf');
+
+  for(var i=0; i<50; i++){ //a retry-after loop, because when running a 429 "Too Many Requests" error may be thrown. caps at 50 requests because I hope it doesn't come to that.
+
+      Utilities.sleep(3000);//wait before retrying //look it suggested using a "retry-after" header but I need to figure out how to use that first.
+      try{
+        var blob = UrlFetchApp.fetch(url, params).getBlob().setName(pdfName + '.pdf');
+        break;
+      }
+      catch(error){ //as far as I'm aware this'll catch every type of error.
+        Logger.log("Error: " + String(error));
+        Logger.log("Encountered error... retrying.\nRetry Counter: " + String(i));
+      }
+  }
 
   // Gets the folder in Drive where the PDFs are stored.
   const folder = pdf_getFolderByName_(folderName);
@@ -176,6 +188,7 @@ function pdf_izer(rubric) {
 
   }
   Logger.log("completed pdf_izer");
+  ui.alert(String(NUM_STUDENTS) + " PDFs have been saved to the folder " + OUTPUT_FOLDER_NAME +".");
   ran_pdfizer = true;
 }
 
