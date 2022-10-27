@@ -1,5 +1,8 @@
 function pdf_obtain_info() {
-  if (ran_obtainInfo===true){
+  //does: prompts the user to input information (folder name, pdf name) & has them confirm their choices.
+
+
+  if (ran_obtainInfo===true){ //run-once-only lock
     Logger.log("already ran pdf_obtain_info! returning...")
     return;
   }
@@ -146,9 +149,9 @@ function createPDF(ssId, rubric, pdfName, folderName) {
 
   const params = { method: "GET", headers: { "authorization": "Bearer " + ScriptApp.getOAuthToken() } };
 
-  for(var i=0; i<50; i++){ //a retry-after loop, because when running a 429 "Too Many Requests" error may be thrown. caps at 50 requests because I hope it doesn't come to that.
+  for(var i=0; i<50; i++){ //a retry-after loop, because when running, may encounter a 429 "Too Many Requests" error. caps at 50 requests because I hope it doesn't come to that.
 
-      Utilities.sleep(3000);//wait before retrying //look it suggested using a "retry-after" header but I need to figure out how to use that first.
+      Utilities.sleep(3000);//wait before retrying //it suggested using a "retry-after" header but I need to figure out how to use that first.
       try{
         var blob = UrlFetchApp.fetch(url, params).getBlob().setName(pdfName + '.pdf');
         break;
