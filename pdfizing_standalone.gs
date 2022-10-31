@@ -1,8 +1,32 @@
+var ran_obtainInfo = false; //for run-once-only capabilities
+
+var info = pdf_obtain_info(); //new var so it doesn't run the function thrice
+var ssID = info[0]
+var OUTPUT_FOLDER_NAME = info[1]
+var OUTPUT_PDF_NAME = info[2];
+
+Logger.log("ssID: " + String(ssID) + "\nOutput Folder Name: " + OUTPUT_FOLDER_NAME + "\nPDF Name: " + OUTPUT_PDF_NAME);
+
+var gsheet = SpreadsheetApp.getActiveSpreadsheet();
+var rubric = gsheet.getSheetByName("Summary Rubric"); //HARDCODED (but should be what the tabs're already named)
+var gradebook = gsheet.getSheetByName("Gradebook"); //HARDCODED
+//make sure that your spreadsheet tabs are named these!
+
+//vv calculating variables vv
+
+for(var i=4;i<gradebook.getMaxColumns();i++){ //finding # of students by way of the Gradebook. index starts at 4 (Column D)
+  //Logger.log(gradebook.getRange(2,i).getValue());
+  if(gradebook.getRange(2,i).getValue() === ""){ //stops when the cell in row 2 is empty. Note: afaik, coordinates are (row #, column #) - (y,x) rather than (x,y).
+      var NUM_STUDENTS = i-4; //HARDCODED # of rows that aren't students, then subtract 1
+      Logger.log("num of students: " + NUM_STUDENTS);
+      break;
+    }
+}
+
+//========================================================================
+//vv function defining vv
 function pdf_obtain_info() {
-  //does: prompts the user to input information (folder name, pdf name) & has them confirm their choices.
-
-
-  if (ran_obtainInfo===true){ //run-once-only lock
+  if (ran_obtainInfo===true){
     Logger.log("already ran pdf_obtain_info! returning...")
     return;
   }
@@ -42,33 +66,6 @@ function pdf_obtain_info() {
   //returns: ssID, OUTPUT_FOLDER_NAME, OUTPUT_PDF_NAME
 }
 
-var ran_obtainInfo = false; //for run-once-only capabilities
-
-var info = pdf_obtain_info(); //new var so it doesn't run the function thrice
-var ssID = info[0]
-var OUTPUT_FOLDER_NAME = info[1]
-var OUTPUT_PDF_NAME = info[2];
-
-Logger.log("ssID: " + String(ssID) + "\nOutput Folder Name: " + OUTPUT_FOLDER_NAME + "\nPDF Name: " + OUTPUT_PDF_NAME);
-
-var gsheet = SpreadsheetApp.getActiveSpreadsheet();
-var rubric = gsheet.getSheetByName("Summary Rubric"); //HARDCODED (but should be what the tabs're already named)
-var gradebook = gsheet.getSheetByName("Gradebook"); //HARDCODED
-//make sure that your spreadsheet tabs are named these!
-
-//vv calculating variables vv
-
-for(var i=4;i<gradebook.getMaxColumns();i++){ //finding # of students by way of the Gradebook. index starts at 4, equiv. Column D
-  //Logger.log(gradebook.getRange(2,i).getValue());
-  if(gradebook.getRange(2,i).getValue() === ""){
-      var NUM_STUDENTS = i-4; //HARDCODED # of rows that aren't students, then subtract 1
-      Logger.log("num of students: " + NUM_STUDENTS);
-      break;
-    }
-}
-
-//========================================================================
-//vv function defining vv
 function pdf_getFolderByName_(folderName) {
   //original from https://developers.google.com/apps-script/samples/automations/generate-pdfs thank you
   //input: name of GDrive folder
@@ -130,7 +127,7 @@ function createPDF(ssId, rubric, pdfName, folderName) {
   var sheetID = rubric.getSheetId(); //gets sheetID of the rubric tab :)
 
   const url = "https://docs.google.com/spreadsheets/d/" + ssId + "/export" +
-    "?format=pdf&" + //ik these might not be the default print settings when you CMD+P but i haven't the heart to fix them rn
+    "?format=pdf&" + //ik these might not be the default print settings when you CMD+P but i haven't the heart to fix them right now
     "size=7&" +
     "fzr=true&" +
     "portrait=false&" +
@@ -145,20 +142,20 @@ function createPDF(ssId, rubric, pdfName, folderName) {
     "pagenum=UNDEFINED&" +
     "attachment=true&" +
     "gid=" + sheetID + '&' +
-    "r1=" + fr + "&c1=" + fc + "&r2=" + lr + "&c2=" + lc; //lr is not declared with the others b/c it's a function input
+    "r1=" + fr + "&c1=" + fc + "&r2=" + lr + "&c2=" + lc;
 
   const params = { method: "GET", headers: { "authorization": "Bearer " + ScriptApp.getOAuthToken() } };
 
-  for(var i=0; i<50; i++){ //a retry-after loop, because when running, may encounter a 429 "Too Many Requests" error. caps at 50 requests because I hope it doesn't come to that.
+  for(var i=0; i<50; i++){ //a retry-after loop, because when running a 429 "Too Many Requests" error may be thrown. caps at 50 requests because I hope it doesn't come to that.
 
-      Utilities.sleep(3000);//wait before retrying //it suggested using a "retry-after" header but I need to figure out how to use that first.
       try{
         var blob = UrlFetchApp.fetch(url, params).getBlob().setName(pdfName + '.pdf');
         break;
       }
-      catch(error){ //as far as I'm aware this'll catch every type of error.
-        Logger.log("Error: " + String(error));
+      catch(error){ //TODO: have it only retry if it's an error 429
+      Logger.log("Error: " + String(error));
         Logger.log("Encountered error... retrying.\nRetry Counter: " + String(i));
+        Utilities.sleep(10000);//waits 10 sec before retrying. TODO: exponential backoff, OR figure out how to use the "retry-after" header.
       }
   }
 
@@ -175,7 +172,7 @@ function pdf_izer(rubric) {
   //returns: none, but RESULTS IN: the saving of everyone's pdfs to a GFolder indicated by the variable "OUTPUT_FOLDER_NAME"
   //does: iterates through the a1 cell in the rubric tab to create a pdf for each student
 
-  //had a run-once-only if-statement here but took it out
+  //run-once-only lock moved to obtain_info function.
 
   Logger.log("starting pdf_izer...");
   var studentName = "";
@@ -183,15 +180,16 @@ function pdf_izer(rubric) {
   pdf_getFolderByName_confirmation(OUTPUT_FOLDER_NAME);
 
   Logger.log(rubric.getRange(2,2).getValue())
-  for(var i=2;i<NUM_STUDENTS+2;i++){ //idk why I needed the +2 lmao //the i is for the student ID of the first rubric you'd like to make
+  for(var i=2;i<NUM_STUDENTS+2;i++){ //I don't remember why I needed the +2 //the i is for the student ID of the first rubric you'd like to make
     rubric.getRange(1,1).setValue(i);
     studentName = rubric.getRange(1,2).getValue();
     Logger.log(studentName);
-    createPDF(ssID, rubric, OUTPUT_PDF_NAME.replace("STUDENTNAME",studentName.replace(" ", "_")).replace("DOCNAME", documentName.replace(/ /g, "_")), OUTPUT_FOLDER_NAME); //replaces the placeholders and puts in the student name & doc name, where the spaces have been replaced with underscores
+    createPDF(ssID, rubric, OUTPUT_PDF_NAME.replace("STUDENTNAME",studentName.replace(/ /g, "_")).replace("DOCNAME", documentName.replace(/ /g, "_")), OUTPUT_FOLDER_NAME); //replaces the placeholders and puts in the student name & doc name, with the spaces replaced with underscores
 
   }
   Logger.log("completed pdf_izer");
-  ui.alert(String(NUM_STUDENTS) + " PDFs have been saved to the folder " + OUTPUT_FOLDER_NAME +".");
+  var ui = SpreadsheetApp.getUi();
+  ui.alert(String(NUM_STUDENTS) + " PDFs have been saved to the folder " + OUTPUT_FOLDER_NAME +"."); //TODO: confirm that the right PDFs (number & name) are actually in the GDrive folder(?)
   ran_pdfizer = true;
 }
 
