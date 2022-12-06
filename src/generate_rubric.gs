@@ -1,4 +1,22 @@
 const RubricGenerator = (function () {
+	//> Misc Utils
+	function noOpFormat(strings, ...placeholders) {
+		let builder = "";
+		for (let i = 0; i < strings.length; i++) {
+			builder += strings[i];
+			if (i < placeholders.length) {
+				builder += placeholders[i];
+			}
+		}
+
+		return builder;
+	}
+
+	function wihoutLeading(strings, ...placeholders) {
+		const raw = noOpFormat(strings, ...placeholders);
+		return raw.replace(/^[ \t]+/gm, "");
+	}
+
 	//> CSV Helpers
 	function parseCSV(file) {
 		// Normalize CRLF to LF
@@ -182,6 +200,25 @@ const RubricGenerator = (function () {
 			return this.offset(1, 0);
 		}
 
+		left() {
+			return this.offset(0, -1);
+		}
+
+		right() {
+			return this.offset(0, 1);
+		}
+
+		asRange(rows, cols) {
+			return cols === undefined ?
+				new RangeRef(this) :
+				new RangeRef(this).extend(rows, cols);
+		}
+
+		//> GScript integration
+		gsGetRange(sheet) {
+			return sheet.getRange(this.row + 1, this.col + 1);
+		}
+
 		//> Representational Conversions
 		get map_key() {
 			return `${this.row},${this.col}`;
@@ -216,17 +253,77 @@ const RubricGenerator = (function () {
 		}
 	}
 
+	class RangeRef {
+		constructor(start, end) {
+			if (end === undefined) {
+				this.start_ = start;
+				this.end_ = start;
+			} else {
+				const sheet = start.sheet;
+				if (start.sheet !== end.sheet) {
+					throw "Mismatched sheets";
+				}
+
+				this.start_ = new CellRef(
+					Math.min(start.row, end.row),
+					Math.min(start.col, end.col),
+					sheet,
+				);
+				this.end_ = new CellRef(
+					Math.max(start.row, end.row),
+					Math.max(start.col, end.col),
+					sheet,
+				);
+			}
+		}
+
+		extend(rows, cols) {
+			return new RangeRef(this.start_, this.end_.offset(rows, cols));
+		}
+
+		gsGetRange(sheet) {
+			return sheet.getRange(
+				this.start_.row + 1,
+				this.start_.col + 1,
+				this.width,
+				this.height,
+			);
+		}
+
+		get start() {
+			return this.start_;
+		}
+
+		get end() {
+			return this.end_;
+		}
+
+		get width() {
+			return this.end_.row - this.start_.row + 1;
+		}
+
+		get height() {
+			return this.end_.col - this.start_.col + 1;
+		}
+
+		get sheet() {
+			return this.start_.sheet;
+		}
+	}
+
 	class TableBuilder {
 		constructor() {
 			this.aabb = new CellRef(0, 0);
 			this.cells = new Map();
+			this.format_merges = [];
+			this.format_ops = [];
 		}
 
 		get(pos) {
 			return this.cells.get(pos.map_key);
 		}
 
-		set(pos, content) {
+		set(pos, content, style) {
 			// Grow AABB
 			this.aabb = this.aabb.at(
 				Math.max(this.aabb.row, pos.row),
@@ -239,6 +336,40 @@ const RubricGenerator = (function () {
 				throw `Cell at ${pos} already has a value.`;
 			}
 			this.cells.set(key, content);
+
+			// Set style
+			if (style !== undefined) {
+				this.format(pos, style);
+			}
+		}
+
+		format(range, style) {
+			if (range instanceof CellRef) {
+				range = range.asRange();
+			}
+
+			this.format_ops.push({ kind: "style", range, style });
+		}
+
+		formatBorder(range) {
+			this.format(range, { border: { top: true, left: true, bottom: true, right: true } });
+		}
+
+		formatMerge(range) {
+			this.format_merges.push(range);
+		}
+
+		formatBorderAndMerge(range) {
+			this.formatBorder(range);
+			this.formatMerge(range);
+		}
+
+		formatColumnSize(index, size) {
+			this.format_ops.push({ kind: "column_resize", index, size });
+		}
+
+		formatRowSize(index, size) {
+			this.format_ops.push({ kind: "row_resize", index, size });
 		}
 
 		asCSV() {
@@ -255,7 +386,10 @@ const RubricGenerator = (function () {
 			return builder.builder;
 		}
 
-		writeToSheet(sheet) {
+		gsWriteToSheet(sheet) {
+			// Write raw text
+			const values = [];
+
 			for (let row = 0; row <= this.aabb.row; row++) {
 				const row_value = [];
 				for (let col = 0; col <= this.aabb.col; col++) {
@@ -263,7 +397,83 @@ const RubricGenerator = (function () {
 					row_value.push(cell_value !== undefined ? cell_value : "");
 				}
 
-				sheet.appendRow(row_value);
+				values.push(row_value);
+			}
+
+			sheet.getRange(1, 1, this.aabb.row + 1, this.aabb.col + 1)
+				.setValues(values);
+
+			// Apply merges
+			for (const range of this.format_merges) {
+				range.gsGetRange(sheet).merge();
+			}
+
+			// Apply formatting
+			for (const op of this.format_ops) {
+				if (op.kind === "style") {
+					const range = op.range.gsGetRange(sheet);
+					const style = op.style;
+
+					// Apply cell formatting
+					if ("background_color" in style) {
+						range.setBackground(style.background_color);
+					}
+
+					if ("align" in style) {
+						range.setHorizontalAlignment(style.align);
+					}
+
+					if ("number_format" in style) {
+						range.setNumberFormat(style.number_format);
+					}
+
+					if ("border" in style) {
+						const { top, left, bottom, right, vertical, horizontal } = style["border"];
+						range.setBorder(
+							top ?? null,
+							left ?? null,
+							bottom ?? null,
+							right ?? null,
+							vertical ?? null,
+							horizontal ?? null,
+						);
+					}
+
+					// Apply text formatting
+					const builder = SpreadsheetApp.newTextStyle();
+
+					if ("font_family" in style) {
+						builder.setFontFamily(style.font_family);
+					}
+
+					if ("font_size" in style) {
+						builder.setFontSize(style.font_size);
+					}
+
+					if ("color" in style) {
+						builder.setForegroundColor(style.color);
+					}
+
+					if ("bold" in style) {
+						builder.setBold(style.bold);
+					}
+
+					if ("italic" in style) {
+						builder.setItalic(style.italic);
+					}
+
+					if ("underline" in style) {
+						builder.setUnderline(style.underline);
+					}
+
+					range.setTextStyle(builder.build());
+				} else if (op.kind === "column_resize") {
+					sheet.setColumnWidth(op.index + 1, op.size);
+				} else if (op.kind === "row_resize") {
+					sheet.setRowHeight(op.index + 1, op.size);
+				} else {
+					throw `Unrecognized formatting operation: ${op.kind}`;
+				}
 			}
 		}
 	}
@@ -395,7 +605,7 @@ const RubricGenerator = (function () {
 	}
 
 	//> Builder
-	const DEFAULT_MASTERY_EXPLANATIONS = `\
+	const DEFAULT_MASTERY_EXPLANATIONS = wihoutLeading`\
 	Learning standard mastery levels:
 	4* - (Commendation) Student work shows evidence of especially sophisticated, nuanced, or analytical thinking. 
 	4 - (Mastery) Student demonstrates mastery of the standards assessed. 
@@ -407,6 +617,38 @@ const RubricGenerator = (function () {
 	function buildSummary(rubric) {
 		const table = new TableBuilder();
 
+		// Define styles
+		const STYLE_BOLD = {
+			bold: true,
+		};
+
+		const STYLE_DOCUMENT_HEADER = {
+			...STYLE_BOLD,
+			background_color: "#cccccc",
+		};
+
+		const STYLE_SUMMARY_BASE = {
+			background_color: "#f4cccc",
+		};
+
+		const STYLE_SUMMARY_NAME = {
+			...STYLE_SUMMARY_BASE,
+			align: "right",
+			bold: true,
+		};
+
+		const STYLE_SUMMARY_VALUE = {
+			...STYLE_SUMMARY_BASE,
+			number_format: "0.00",
+			align: "center",
+		};
+
+		const STYLE_SECTION_HEADER = {
+			...STYLE_BOLD,
+			background_color: "#b7b7b7",
+			align: "center",
+		};
+
 		// Define lookup mechanism
 		const sid_cell = new CellRef(0, 0);
 
@@ -414,26 +656,58 @@ const RubricGenerator = (function () {
 			return `=LOOKUP(${sid_cell.formula}, ${rubric.id_column.unbounded_col}, ${target_column.unbounded_col})`;
 		}
 
+		// Write column sizes
+		{
+			const SIZES = [100, 26, 240, 118, 180, 100];
+			for (let i = 0; i < SIZES.length; i++) {
+				table.formatColumnSize(i, SIZES[i]);
+			}
+		}
+
 		// Write header
 		let head = sid_cell.offset(0, 1);
 
-		table.set(sid_cell, "1");
-		table.set(head.offset(0, 0), makeLookupFormula(rubric.name_column));
-		table.set(head.offset(0, 3), "Course grade:");
-		table.set(head.offset(0, 4), "(define a grading formula here)");
-		head = head.below();
+		{
+			// Write student ID
+			table.set(sid_cell, "1");
+			table.set(sid_cell.below(), "Student ID ^^");
+			table.format(sid_cell.below(), { align: "right" });
 
-		table.set(head, "Enter Course Name Here");
-		head = head.below();
+			// Apply gray header style to first two rows
+			table.format(new RangeRef(head, head.offset(1, 4)), STYLE_DOCUMENT_HEADER);
 
-		table.set(head, DEFAULT_MASTERY_EXPLANATIONS);
-		head = head.below();
+			// Write student name
+			table.set(head.offset(0, 0), makeLookupFormula(rubric.name_column));
+			table.formatMerge(head.asRange(0, 2));
+
+			// Write course grade
+			table.set(head.offset(0, 3), "Course grade:");
+			table.set(head.offset(0, 4), "(define a grading formula here)");
+
+			// Apply a border to the first line
+			table.formatBorder(head.asRange(0, 4));
+			head = head.below();
+
+			// Write course title
+			table.set(head, "Enter Course Name Here");
+			table.formatBorderAndMerge(head.asRange(0, 4));
+
+			head = head.below();
+		}
+
+		// Write default mastery explanations
+		{
+			table.set(head, DEFAULT_MASTERY_EXPLANATIONS);
+			table.formatBorderAndMerge(head.asRange(0, 4));
+			head = head.below();
+		}
 
 		// Write mastery level summaries
 		const categories = rubric.root_objective.children;
 		const category_avg_cells = [];
 		{
 			let average_formula_builder = "=";
+			const start = head;
 
 			// Write out category averages
 			for (let i = 0; i < categories.length; i++) {
@@ -455,11 +729,33 @@ const RubricGenerator = (function () {
 					average_formula_builder += "+";
 				}
 				average_formula_builder += `REGEXEXTRACT(${summary_cell.formula},".*\\(([\\d.]+)% weight\\)")/100*${average_cell.formula}`;
+
+				// Format these three cells appropriately
+				table.format(summary_cell.asRange(0, 1), STYLE_SUMMARY_NAME);
+				table.formatMerge(summary_cell.asRange(0, 1));
+				table.format(average_cell, STYLE_SUMMARY_VALUE);
+			}
+
+			// Format the left border
+			table.formatBorder(new RangeRef(start, head.offset(-1, 2)));
+
+			// Format the right padding
+			{
+				const right_pad_range = new RangeRef(start.offset(0, 3), head.offset(0, 4));
+				table.format(right_pad_range, STYLE_SUMMARY_BASE);
+				table.formatBorderAndMerge(right_pad_range);
 			}
 
 			// Write out total mastery level average
 			table.set(head, "Average Mastery Level");
 			table.set(head.offset(0, 2), average_formula_builder);
+
+			// Format these three cells appropriately
+			table.format(head.asRange(0, 1), STYLE_SUMMARY_NAME);
+			table.formatMerge(head.asRange(0, 1));
+			table.format(head.offset(0, 2), STYLE_SUMMARY_VALUE);
+			table.formatBorder(head.asRange(0, 2));
+
 			head = head.below();
 		}
 
@@ -469,12 +765,21 @@ const RubricGenerator = (function () {
 				// Treat node as leaf
 				table.set(head, makeLookupFormula(node.value_column));
 				table.set(head.offset(0, 1), node.name);
+				table.formatBorder(head);
+				table.format(head, { align: "center" });
+				table.formatMerge(new RangeRef(head.offset(0, 1), head.offset(0, 4)));
+				table.format(head.offset(0, 5), { border: { left: true } });
+
 				head = head.below();
 			} else {
 				// Treat node as header
 				table.set(head, node.name);
+				table.formatBorderAndMerge(new RangeRef(head, head.offset(0, 4)));
+				table.format(new RangeRef(head, head.offset(0, 4)), STYLE_SECTION_HEADER);
+
 				head = head.below();
 
+				// Write childen
 				for (const child of node.children) {
 					writeTree(child);
 				}
@@ -488,6 +793,8 @@ const RubricGenerator = (function () {
 
 			table.set(category_avg_cells[i], `=AVERAGE(${start.formula}:${end.formula})`);
 		}
+
+		table.format(head.above().asRange(0, 4), { border: { bottom: true } });
 
 		return table;
 	}
@@ -527,5 +834,5 @@ function gsHookGenerateRubric() {
 	const table = RubricGenerator.buildSummary(rubric);
 	const output_sheet = doc.insertSheet();
 	output_sheet.setName("Summary Rubric");
-	table.writeToSheet(output_sheet);
+	table.gsWriteToSheet(output_sheet);
 }

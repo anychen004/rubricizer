@@ -1,8 +1,8 @@
 function onOpen() {
-  const ui = SpreadsheetApp.getUi();
+	const ui = SpreadsheetApp.getUi();
 
-  ui.createMenu('Rubricizer')
-    .addItem('Generate Summary Rubric', 'gsHookGenerateRubric')
-    .addItem('Generate PDF', 'gsHookGeneratePDFs')
-    .addToUi();
+	ui.createMenu('Rubricizer')
+		.addItem('Generate Summary Rubric', 'gsHookGenerateRubric')
+		.addItem('Generate PDF', 'gsHookGeneratePDFs')
+		.addToUi();
 }
