@@ -236,8 +236,12 @@ const RubricGenerator = (function () {
 			return `$${this.row + 1}`;
 		}
 
+		get local_formula() {
+			return `${this.col_name}${this.row_name}`;
+		}
+
 		get formula() {
-			return `${this.sheet_prefix}${this.col_name}${this.row_name}`;
+			return `${this.sheet_prefix}${this.local_formula}`;
 		}
 
 		get unbounded_col() {
@@ -306,8 +310,16 @@ const RubricGenerator = (function () {
 			return this.end_.col - this.start_.col + 1;
 		}
 
+		get formula() {
+			return `${this.sheet_prefix}${this.start_.local_formula}:${this.end_.local_formula}`;
+		}
+
 		get sheet() {
 			return this.start_.sheet;
+		}
+
+		get sheet_prefix() {
+			return this.start_.sheet_prefix;
 		}
 	}
 
@@ -423,6 +435,10 @@ const RubricGenerator = (function () {
 						range.setHorizontalAlignment(style.align);
 					}
 
+					if ("valign" in style) {
+						range.setVerticalAlignment(style.valign);
+					}
+
 					if ("number_format" in style) {
 						range.setNumberFormat(style.number_format);
 					}
@@ -437,6 +453,11 @@ const RubricGenerator = (function () {
 							vertical ?? null,
 							horizontal ?? null,
 						);
+					}
+
+					if ("wrap_strategy" in style) {
+						range.setWrap(true);
+						range.setWrapStrategy(SpreadsheetApp.WrapStrategy[style.wrap_strategy]);
 					}
 
 					// Apply text formatting
@@ -523,8 +544,14 @@ const RubricGenerator = (function () {
 						throw "Missing corresponding mastery points column for result column.";
 					}
 
-					// Extract standard path parts, stripping any Canvas-added formatting.
-					objective_paths.push(objective_path_str.split(" > "));
+					// Push path to list
+					const parts = objective_path_str
+						// Extract standard path parts, stripping any Canvas-added formatting.
+						.split(" > ")
+						// Remove prefixes like "1. "
+						.map(part => part.replace(/^\d+\. /, ""));
+
+					objective_paths.push(parts);
 				}
 			}
 
@@ -614,6 +641,19 @@ const RubricGenerator = (function () {
 	1 - (Insufficient evidence) Student has submitted insufficient evidence for the standards assessed.\
 	`;
 
+	const DEFAULT_GRADE_TABLE_VALUES = [
+		[0, "A"],
+		[0, "A-"],
+		[0, "B+"],
+		[0, "B"],
+		[0, "B-"],
+		[0, "C+"],
+		[0, "C"],
+		[0, "C-"],
+		[0, "D+"],
+		[0, "D"],
+	];
+
 	function buildSummary(rubric) {
 		const table = new TableBuilder();
 
@@ -658,7 +698,7 @@ const RubricGenerator = (function () {
 
 		// Write column sizes
 		{
-			const SIZES = [100, 26, 240, 118, 180, 100];
+			const SIZES = [100, 26, 240, 118, 180, 100, 100, 170, 100];
 			for (let i = 0; i < SIZES.length; i++) {
 				table.formatColumnSize(i, SIZES[i]);
 			}
@@ -666,12 +706,12 @@ const RubricGenerator = (function () {
 
 		// Write header
 		let head = sid_cell.offset(0, 1);
+		let grade_display_cell;
 
 		{
 			// Write student ID
 			table.set(sid_cell, "1");
-			table.set(sid_cell.below(), "Student ID ^^");
-			table.format(sid_cell.below(), { align: "right" });
+			table.set(sid_cell.below(), "Student ID ^^", { align: "right" });
 
 			// Apply gray header style to first two rows
 			table.format(new RangeRef(head, head.offset(1, 4)), STYLE_DOCUMENT_HEADER);
@@ -682,7 +722,7 @@ const RubricGenerator = (function () {
 
 			// Write course grade
 			table.set(head.offset(0, 3), "Course grade:");
-			table.set(head.offset(0, 4), "(define a grading formula here)");
+			grade_display_cell = head.offset(0, 4);
 
 			// Apply a border to the first line
 			table.formatBorder(head.asRange(0, 4));
@@ -739,16 +779,37 @@ const RubricGenerator = (function () {
 			// Format the left border
 			table.formatBorder(new RangeRef(start, head.offset(-1, 2)));
 
-			// Format the right padding
-			{
-				const right_pad_range = new RangeRef(start.offset(0, 3), head.offset(0, 4));
-				table.format(right_pad_range, STYLE_SUMMARY_BASE);
-				table.formatBorderAndMerge(right_pad_range);
-			}
-
 			// Write out total mastery level average
+			const average_mastery_level_cell = head.offset(0, 2);
 			table.set(head, "Average Mastery Level");
-			table.set(head.offset(0, 2), average_formula_builder);
+			table.set(average_mastery_level_cell, average_formula_builder);
+
+			// Format the grade mastery conversion
+			{
+				// Construct the lookup table
+				const lookup_start = start.offset(0, 6);
+				const lookup_full_range = lookup_start.asRange(DEFAULT_GRADE_TABLE_VALUES.length, 1);
+
+				table.format(lookup_start.asRange(0, 1), { bold: true, align: "left" });
+				table.set(lookup_start, "Minimum Mastery Level");
+				table.set(lookup_start.right(), "Letter Grade");
+
+				for (let i = 0; i < DEFAULT_GRADE_TABLE_VALUES.length; i++) {
+					const [score, grade] = DEFAULT_GRADE_TABLE_VALUES[i];
+
+					table.set(lookup_start.offset(i + 1, 0), score, { number_format: "0.00", align: "left" });
+					table.set(lookup_start.offset(i + 1, 1), grade, { align: "left" });
+				}
+
+				// Construct the summary
+				const summary_range = new RangeRef(start.offset(0, 3), head.offset(0, 4));
+				table.format(summary_range, STYLE_SUMMARY_BASE);
+				table.formatBorderAndMerge(summary_range);
+				table.set(start.offset(0, 3), `=RUBRICIZER_GRADE_SUMMARY(${lookup_full_range.formula})`, { wrap_strategy: "WRAP" });
+
+				// Construct the grade display
+				table.set(grade_display_cell, `=RUBRICIZER_GRADE_SEARCH(${lookup_full_range.formula}, ${average_mastery_level_cell.formula})`);
+			}
 
 			// Format these three cells appropriately
 			table.format(head.asRange(0, 1), STYLE_SUMMARY_NAME);
@@ -766,7 +827,7 @@ const RubricGenerator = (function () {
 				table.set(head, makeLookupFormula(node.value_column));
 				table.set(head.offset(0, 1), node.name);
 				table.formatBorder(head);
-				table.format(head, { align: "center" });
+				table.format(head, { valign: "middle", align: "center" });
 				table.formatMerge(new RangeRef(head.offset(0, 1), head.offset(0, 4)));
 				table.format(head.offset(0, 5), { border: { left: true } });
 
