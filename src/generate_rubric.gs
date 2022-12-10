@@ -824,7 +824,7 @@ const RubricGenerator = (function () {
 		function writeTree(node) {
 			if (node.value_column !== null) {
 				// Treat node as leaf
-				table.set(head, makeLookupFormula(node.value_column));
+				table.set(head, makeLookupFormula(node.points_column));
 				table.set(head.offset(0, 1), node.name);
 				table.formatBorder(head);
 				table.format(head, { valign: "middle", align: "center" });
@@ -852,7 +852,7 @@ const RubricGenerator = (function () {
 			writeTree(categories[i]);
 			const end = head.above();
 
-			table.set(category_avg_cells[i], `=AVERAGE(${start.formula}:${end.formula})`);
+			table.set(category_avg_cells[i], `=AVERAGE(${start.below().formula}:${end.formula})`);
 		}
 
 		table.format(head.above().asRange(0, 4), { border: { bottom: true } });
