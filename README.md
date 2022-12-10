@@ -16,7 +16,7 @@
 
 ## Setup
 
-**DISCLAIMER:** The wiki and setup sections have been made somewhat outdated by recent changes to the rubric generator.
+**DISCLAIMER:** The wiki and setup sections have been made somewhat outdated by recent changes to the rubric generator. Updated documentation currently in the works.
 
 * Get a copy of the Intro to Fab Rubric Template via the sharelink (Wiki → Materials).
 * It'll have a Rubric template & gradebook w/ dummy students (yes I made those names up). If you plan on working on the Reformatter, you'll have to Import → "Import as new sheet(s)" the raw canvas export csv.
